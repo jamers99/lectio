@@ -1,0 +1,459 @@
+#!/usr/bin/env python3
+"""Lectio: a Bible reader that follows your Omarchy theme."""
+
+import html
+import json
+import os
+import re
+import subprocess
+import threading
+import tomllib
+import urllib.error
+import urllib.parse
+import urllib.request
+from collections import OrderedDict
+from html.parser import HTMLParser
+from pathlib import Path
+
+import gi
+
+gi.require_version("Gdk", "3.0")
+gi.require_version("Gtk", "3.0")
+gi.require_version("WebKit2", "4.1")
+from gi.repository import Gdk, Gio, GLib, Gtk, WebKit2  # noqa: E402
+
+APP_ID = "io.github.jamers99.lectio"
+DEBUG = bool(os.environ.get("LECTIO_DEBUG"))
+UI = Path(__file__).resolve().parent / "ui"
+HOME = Path.home()
+DATA = Path(os.environ.get("XDG_DATA_HOME", HOME / ".local/share")) / "lectio"
+CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "lectio/config.toml"
+THEME = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "omarchy/current/theme"
+PUBLIC_DOMAIN = "https://raw.githubusercontent.com/scrollmapper/bible_databases/master/formats/json/{}.json"
+READING_FONTS = ["Literata", "Source Serif 4", "Crimson Pro", "EB Garamond", "Libertinus Serif", "Noto Serif"]
+
+# name | chapters | extra search aliases (prefixes of the name already work)
+BOOKS = [line.split("|") for line in """\
+Genesis|50|gn
+Exodus|40|
+Leviticus|27|lv
+Numbers|36|nm
+Deuteronomy|34|dt
+Joshua|24|jsh
+Judges|21|jdg jg
+Ruth|4|rth
+1 Samuel|31|1sm
+2 Samuel|24|2sm
+1 Kings|22|1kgs
+2 Kings|25|2kgs
+1 Chronicles|29|
+2 Chronicles|36|
+Ezra|10|
+Nehemiah|13|
+Esther|10|
+Job|42|jb
+Psalms|150|pss psa
+Proverbs|31|prv
+Ecclesiastes|12|qoh
+Song of Songs|8|songofsolomon sos sg canticles
+Isaiah|66|is
+Jeremiah|52|
+Lamentations|5|
+Ezekiel|48|ezk
+Daniel|12|dn
+Hosea|14|
+Joel|3|jl
+Amos|9|
+Obadiah|1|
+Jonah|4|jnh
+Micah|7|
+Nahum|3|
+Habakkuk|3|
+Zephaniah|3|
+Haggai|2|
+Zechariah|14|
+Malachi|4|
+Matthew|28|mt
+Mark|16|mk mrk
+Luke|24|lk
+John|21|jn jhn
+Acts|28|
+Romans|16|rm
+1 Corinthians|16|
+2 Corinthians|13|
+Galatians|6|
+Ephesians|6|
+Philippians|4|php
+Colossians|4|
+1 Thessalonians|5|
+2 Thessalonians|3|
+1 Timothy|6|
+2 Timothy|4|
+Titus|3|
+Philemon|1|phlm phm
+Hebrews|13|
+James|5|jas jm
+1 Peter|5|1pt
+2 Peter|3|2pt
+1 John|5|1jn
+2 John|1|2jn
+3 John|1|3jn
+Jude|1|
+Revelation|22|revelations rv""".splitlines()]
+
+
+def get(url, **headers):
+    request = urllib.request.Request(url, headers={"User-Agent": "lectio", **headers})
+    with urllib.request.urlopen(request, timeout=20) as response:
+        return response.read().decode()
+
+
+def fetch_esv(book, chapter, key):
+    query = urllib.parse.urlencode({
+        "q": f"{book} {chapter}",
+        "include-passage-references": "false",
+        "include-audio-link": "false",
+        "include-short-copyright": "false",
+    })
+    passage = json.loads(get(f"https://api.esv.org/v3/passage/html/?{query}", Authorization=f"Token {key}"))["passages"][0]
+    return re.sub(r">(?:&nbsp;)+", ">", passage)  # poetry indents are runs of &nbsp;; CSS indents instead
+
+
+def fetch_nlt(book, chapter, key):
+    query = urllib.parse.urlencode({"ref": f"{book}.{chapter}", "version": "NLT", "key": key})
+    return get(f"https://api.nlt.to/api/passages?{query}")
+
+
+# Translations without "fetch" are public domain, downloaded once by ID from scrollmapper/bible_databases.
+TRANSLATIONS = {
+    "KJV": {"copyright": "King James Version (1769). Public domain."},
+    "ASV": {"copyright": "American Standard Version (1901). Public domain."},
+    "ESV": {
+        "fetch": fetch_esv,
+        "key": "esv_key",
+        "signup": "https://api.esv.org/account/create-application/",
+        "copyright": (
+            "Scripture quotations are from the ESV® Bible (The Holy Bible, English Standard Version®), "
+            "© 2001 by Crossway, a publishing ministry of Good News Publishers. Used by permission. "
+            'All rights reserved. <a href="https://www.esv.org">esv.org</a>'
+        ),
+    },
+    "NLT": {
+        "fetch": fetch_nlt,
+        "key": "nlt_key",
+        "signup": "https://api.nlt.to/Account/Register",
+        "copyright": (
+            "Holy Bible, New Living Translation, © 1996, 2004, 2015 by Tyndale House Foundation. "
+            "Used by permission of Tyndale House Publishers, Carol Stream, Illinois 60188. All rights reserved."
+        ),
+    },
+}
+
+
+class NeedsKey(Exception):
+    pass
+
+
+class Cleaner(HTMLParser):
+    """Keep a safe subset of publisher HTML and turn verse numbers into <span class="vn" data-v="N">."""
+
+    KEEP = {"p", "span", "em", "i", "b", "strong", "h3", "h4", "br", "sup", "a", "div"}
+    DROP = {"script", "style", "head"}
+    DROP_CLASSES = {"bk_ch_vs_header", "chapter-number"}  # NLT repeats the passage title
+    VERSE_CLASSES = {"vn", "verse-num", "chapter-num"}
+
+    def __init__(self):
+        super().__init__()
+        self.out = []
+        self.held = None  # [tag, depth, is_verse, text] while skipping an element or reading a verse number
+
+    def handle_starttag(self, tag, attrs):
+        attrs = {k: v for k, v in attrs if v is not None}
+        classes = set(attrs.get("class", "").split())
+        if self.held:
+            self.held[1] += tag == self.held[0]
+        elif tag in self.DROP or classes & (self.DROP_CLASSES | self.VERSE_CLASSES):
+            self.held = [tag, 1, bool(classes & self.VERSE_CLASSES), ""]
+        elif tag in self.KEEP:
+            kept = {k: v for k, v in attrs.items() if k in ("class", "id") or (k == "href" and v.startswith("#"))}
+            self.out.append(f"<{tag}" + "".join(f' {k}="{html.escape(v)}"' for k, v in kept.items()) + ">")
+
+    def handle_endtag(self, tag):
+        if not self.held:
+            if tag in self.KEEP and tag != "br":
+                self.out.append(f"</{tag}>")
+        elif tag == self.held[0]:
+            self.held[1] -= 1
+            if not self.held[1]:
+                _, _, is_verse, text = self.held
+                self.held = None
+                if is_verse and (numbers := re.findall(r"\d+", text)):
+                    self.out.append(f'<span class="vn" data-v="{numbers[-1]}">{numbers[-1]}</span>')
+
+    def handle_data(self, data):
+        if self.held:
+            self.held[3] += data
+        else:
+            self.out.append(html.escape(data, quote=False))
+
+    @classmethod
+    def clean(cls, markup):
+        cleaner = cls()
+        cleaner.feed(markup)
+        return "".join(cleaner.out)
+
+
+def config():
+    try:
+        return tomllib.loads(CONFIG.read_text())
+    except FileNotFoundError:
+        return {}
+
+
+def read_theme():
+    try:
+        return {k: v for k, v in tomllib.loads((THEME / "colors.toml").read_text()).items() if isinstance(v, str)}
+    except (OSError, tomllib.TOMLDecodeError):
+        return {}
+
+
+def run(*command):
+    try:
+        return subprocess.run(command, capture_output=True, text=True, timeout=5).stdout.strip()
+    except (OSError, subprocess.SubprocessError):
+        return ""
+
+
+def reading_font(preferred):
+    # WebKit uses fontconfig's substitute for a missing family instead of the next one in a CSS list.
+    installed = {name.strip() for line in run("fc-list", ":", "family").splitlines() for name in line.split(",")}
+    return next((font for font in [preferred, *READING_FONTS] if font in installed), None)
+
+
+local_texts = {}
+local_lock = threading.Lock()
+
+
+def local(t):
+    with local_lock:
+        if t not in local_texts:
+            path = DATA / f"{t}.json"
+            if not path.exists():
+                DATA.mkdir(parents=True, exist_ok=True)
+                part = path.with_suffix(".part")
+                part.write_text(get(PUBLIC_DOMAIN.format(t)))
+                part.rename(path)
+            local_texts[t] = [[ch["verses"] for ch in book["chapters"]] for book in json.loads(path.read_text())["books"]]
+        return local_texts[t]
+
+
+# Licensed text is only kept in memory, never more than 500 verses (ESV and NLT terms).
+cache = OrderedDict()
+cache_lock = threading.Lock()
+
+
+def online(t, book, chapter):
+    with cache_lock:
+        if (t, book, chapter) in cache:
+            cache.move_to_end((t, book, chapter))
+            return cache[t, book, chapter]
+    info = TRANSLATIONS[t]
+    key = config().get(info["key"])
+    if not key:
+        raise NeedsKey
+    text = Cleaner.clean(info["fetch"](book, chapter, key))
+    if 'class="vn"' not in text:
+        raise LookupError(f"{t} returned no text for {book} {chapter}.")
+    with cache_lock:
+        cache[t, book, chapter] = text
+        while len(cache) > 1 and sum(h.count('class="vn"') for h in cache.values()) > 500:
+            cache.popitem(last=False)
+    return text
+
+
+def meta():
+    return {
+        "books": [{"name": name, "chapters": int(chapters), "aliases": aliases.split()} for name, chapters, aliases in BOOKS],
+        "translations": [{"id": t, "key": info.get("key"), "signup": info.get("signup")} for t, info in TRANSLATIONS.items()],
+        "theme": read_theme(),
+        "fonts": {"ui": run("omarchy", "font", "current"), "reading": reading_font(config().get("font"))},
+    }
+
+
+def chapter(t, b, c):
+    info, book, c = TRANSLATIONS[t], BOOKS[int(b) - 1][0], int(c)
+    if "fetch" in info:
+        text = online(t, book, c)
+    else:
+        text = "".join(
+            f'<p class="v"><span class="vn" data-v="{v["verse"]}">{v["verse"]}</span>{html.escape(v["text"])}</p>'
+            for v in local(t)[int(b) - 1][c - 1]
+        )
+    return {"html": text, "copyright": info["copyright"]}
+
+
+def search(q, t):
+    if "fetch" in TRANSLATIONS[t]:
+        t = "KJV"
+    words = [re.compile(rf"\b{re.escape(w)}", re.I) for w in re.findall(r"[\w’']+", q)]
+    phrase = " ".join(q.lower().split())
+    exact, loose = [], []
+    for b, book in enumerate(local(t), 1):
+        for c, verses in enumerate(book, 1):
+            for v in verses:
+                if words and all(w.search(v["text"]) for w in words):
+                    hit = {"b": b, "c": c, "v": v["verse"], "text": v["text"]}
+                    (exact if phrase in v["text"].lower() else loose).append(hit)
+    hits = exact + loose
+    return {"t": t, "total": len(hits), "hits": hits[:200]}
+
+
+def copy(text):
+    # wl-copy keeps serving the text after Lectio closes; the web clipboard would not.
+    subprocess.run(["wl-copy"], input=text, text=True, check=True, timeout=5)
+    return {}
+
+
+API = {"meta": meta, "chapter": chapter, "search": search, "copy": copy}
+
+
+def call(name, params):
+    try:
+        return {"ok": True, **API[name](**params)}
+    except NeedsKey as e:
+        return {"ok": False, "needsKey": True, "error": str(e)}
+    except urllib.error.HTTPError as e:
+        if e.code in (401, 403):
+            return {"ok": False, "needsKey": True, "error": "The server rejected the API key."}
+        return {"ok": False, "error": f"{urllib.parse.urlsplit(e.url).hostname} returned {e.code} {e.reason}."}
+    except urllib.error.URLError as e:
+        return {"ok": False, "error": f"Couldn't reach the server ({e.reason}). Are you offline?"}
+    except Exception as e:  # shown in the page rather than crashing the window
+        return {"ok": False, "error": str(e)}
+
+
+def respond(request, body, mime):
+    request.finish(Gio.MemoryInputStream.new_from_bytes(GLib.Bytes.new(body)), len(body), mime)
+    return False
+
+
+class Lectio(Gtk.Application):
+    def __init__(self):
+        super().__init__(application_id=APP_ID)
+        self.window = None
+        self.theme = read_theme()
+        self.monitors = []
+        self.theme_timer = 0
+
+    def do_activate(self):
+        if self.window:
+            return self.window.present()
+        context = WebKit2.WebContext.get_default()
+        context.register_uri_scheme("lectio", self.serve)
+        context.get_security_manager().register_uri_scheme_as_secure("lectio")
+
+        self.css = Gtk.CssProvider()
+        Gtk.StyleContext.add_provider_for_screen(Gdk.Screen.get_default(), self.css, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+        self.view = WebKit2.WebView()
+        self.paint_background()
+        self.view.get_settings().set_enable_developer_extras(DEBUG)
+        self.view.connect("decide-policy", self.open_links_in_browser)
+        self.view.connect("context-menu", lambda *_: not DEBUG)
+        self.view.connect("notify::title", self.title_changed)
+        self.view.load_uri("lectio://app/index.html")
+
+        # WebKit's first frames are black, so cover the page until it has drawn the first chapter.
+        self.cover = Gtk.Box()
+        self.cover.get_style_context().add_class("cover")
+        overlay = Gtk.Overlay()
+        overlay.add(self.view)
+        overlay.add_overlay(self.cover)
+
+        self.window = Gtk.ApplicationWindow(application=self, title="Lectio", default_width=920, default_height=1000)
+        self.window.add(overlay)
+        self.window.show_all()
+        quit_action = Gio.SimpleAction.new("quit", None)
+        quit_action.connect("activate", lambda *_: self.quit())
+        self.add_action(quit_action)
+        self.set_accels_for_action("app.quit", ["<Ctrl>q", "<Ctrl>w"])
+        self.watch_theme()
+
+    # Paint the window as well as the page, so it never flashes black or grey before WebKit draws.
+    def paint_background(self):
+        color = self.theme.get("background", "#1e1e1e")
+        self.css.load_from_data(f"window, .cover {{ background: {color}; }}".encode())
+        background = Gdk.RGBA()
+        background.parse(color)
+        self.view.set_background_color(background)
+
+    def title_changed(self, view, _):
+        title = view.get_title()
+        if not title:
+            return
+        self.window.set_title(title)
+        if self.cover:  # the page sets its title once the first chapter is drawn
+            self.cover.destroy()
+            self.cover = None
+
+    def serve(self, request):
+        url = urllib.parse.urlsplit(request.get_uri())
+        name = url.path.removeprefix("/api/")
+        if name in API:
+            params = dict(urllib.parse.parse_qsl(url.query))
+
+            def answer():
+                body = json.dumps(call(name, params)).encode()
+                GLib.idle_add(respond, request, body, "application/json")
+
+            threading.Thread(target=answer, daemon=True).start()
+            return
+        file = (UI / url.path.lstrip("/")).resolve()
+        mime = {".html": "text/html", ".css": "text/css", ".js": "text/javascript"}.get(file.suffix)
+        if file.parent == UI and file.is_file() and mime:
+            respond(request, file.read_bytes(), mime)
+        else:
+            respond(request, b"not found", "text/plain")
+
+    def open_links_in_browser(self, view, decision, kind):
+        if kind == WebKit2.PolicyDecisionType.RESPONSE:
+            return False
+        uri = decision.get_navigation_action().get_request().get_uri()
+        if uri.startswith("lectio:"):
+            return False
+        if uri.startswith(("https://", "http://")):
+            Gio.AppInfo.launch_default_for_uri(uri, None)
+        decision.ignore()
+        return True
+
+    # `omarchy theme set` may rewrite colors.toml or replace the whole theme directory, so watch both.
+    def watch_theme(self):
+        for monitor in self.monitors:
+            monitor.cancel()
+        self.monitors = [
+            Gio.File.new_for_path(str(path)).monitor_directory(Gio.FileMonitorFlags.WATCH_MOVES, None)
+            for path in (THEME.parent, THEME)
+            if path.is_dir()
+        ]
+        for monitor in self.monitors:
+            monitor.connect("changed", self.theme_changed)
+
+    def theme_changed(self, *_):
+        if self.theme_timer:
+            GLib.source_remove(self.theme_timer)
+        self.theme_timer = GLib.timeout_add(250, self.apply_theme)
+
+    def apply_theme(self):
+        self.theme_timer = 0
+        self.watch_theme()
+        theme = read_theme()
+        if theme and theme != self.theme:
+            self.theme = theme
+            self.paint_background()
+            self.view.evaluate_javascript(f"applyTheme({json.dumps(theme)})", -1, None, None, None, None, None)
+        return False
+
+
+if __name__ == "__main__":
+    GLib.set_prgname(APP_ID)
+    GLib.set_application_name("Lectio")
+    raise SystemExit(Lectio().run(None))

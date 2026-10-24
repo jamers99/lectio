@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Lectio
+GenericName=Bible Reader
+Comment=Read the Bible in your Omarchy theme
+Exec=lectio
+Icon=io.github.jamers99.lectio
+Terminal=false
+Categories=Education;Literature;
+Keywords=bible;scripture;kjv;asv;esv;nlt;
+StartupWMClass=io.github.jamers99.lectio

@@ -1,0 +1,66 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <link rel="stylesheet" href="app.css">
+</head>
+<body>
+  <div id="progress"></div>
+  <header id="bar">
+    <button id="where" class="where" title="Books (b)"><span></span>
+      <svg viewBox="0 0 16 16"><path d="M4 6l4 4 4-4"/></svg></button>
+    <div class="spacer"></div>
+    <nav id="translations" class="segments"></nav>
+    <button id="search" class="icon" title="Go to or search (/)">
+      <svg viewBox="0 0 16 16"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg></button>
+    <button id="prev" class="icon" title="Previous chapter (←)">
+      <svg viewBox="0 0 16 16"><path d="M10 3L5 8l5 5"/></svg></button>
+    <button id="next" class="icon" title="Next chapter (→)">
+      <svg viewBox="0 0 16 16"><path d="M6 3l5 5-5 5"/></svg></button>
+  </header>
+
+  <article id="page">
+    <header class="chapter-head">
+      <div id="book-title"></div>
+      <div id="chapter-num"></div>
+    </header>
+    <div id="text" class="text"></div>
+    <footer>
+      <nav class="pager"><button id="foot-prev"></button><button id="foot-next"></button></nav>
+      <p id="copyright"></p>
+    </footer>
+  </article>
+
+  <div id="books" class="overlay" hidden><div class="sheet"></div></div>
+
+  <div id="palette" class="overlay" hidden>
+    <div class="sheet">
+      <input id="q" placeholder="John 3:16, Ps 23, or words to search…" autocomplete="off" spellcheck="false">
+      <ul id="results"></ul>
+    </div>
+  </div>
+
+  <div id="help" class="overlay" hidden>
+    <div class="sheet">
+      <h4>Keys</h4>
+      <dl>
+        <dt><kbd>←</kbd> <kbd>→</kbd> <kbd>h</kbd> <kbd>l</kbd></dt><dd>Previous / next chapter</dd>
+        <dt><kbd>j</kbd> <kbd>k</kbd> <kbd>Space</kbd></dt><dd>Scroll</dd>
+        <dt><kbd>/</kbd> <kbd>g</kbd> <kbd>Ctrl K</kbd></dt><dd>Go to a reference or search</dd>
+        <dt><kbd>b</kbd></dt><dd>Books and chapters</dd>
+        <dt><kbd>t</kbd> <kbd>1</kbd>–<kbd>9</kbd></dt><dd>Change translation</dd>
+        <dt>Click a verse number</dt><dd>Select it (Shift-click for a range)</dd>
+        <dt><kbd>y</kbd> <kbd>Ctrl C</kbd></dt><dd>Copy selected verses with the reference</dd>
+        <dt><kbd>+</kbd> <kbd>-</kbd> <kbd>0</kbd></dt><dd>Text size</dd>
+        <dt><kbd>v</kbd></dt><dd>One verse per line, or flowing text (KJV, ASV)</dd>
+        <dt><kbd>r</kbd></dt><dd>Reload the chapter</dd>
+        <dt><kbd>Esc</kbd></dt><dd>Close, or clear the selection</dd>
+      </dl>
+    </div>
+  </div>
+
+  <div id="tip" hidden></div>
+  <div id="toast" hidden></div>
+  <script src="app.js"></script>
+</body>
+</html>

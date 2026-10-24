@@ -1,0 +1,156 @@
+/* Colours come from the Omarchy theme (applyTheme). The rest are derived from these. */
+:root {
+  --fg: #d8d8d8;
+  --accent: #8fb3d9;
+  --red: #e07a7a;
+  --bg-raised: color-mix(in srgb, var(--fg) 6%, var(--bg));
+  --bg-sunken: color-mix(in srgb, #000 30%, var(--bg));
+  --fg-soft: color-mix(in srgb, var(--fg) 68%, var(--bg));
+  --muted: color-mix(in srgb, var(--fg) 25%, var(--bg));
+  --sel: color-mix(in srgb, var(--accent) 22%, var(--bg));
+  --ui-font: monospace;
+  --reading-font: serif;
+  --size: 20px;
+}
+
+* { box-sizing: border-box; }
+html, body { margin: 0; background: var(--bg, transparent); color: var(--fg); }
+body { font: 13px/1.4 var(--ui-font); }
+button { font: inherit; color: inherit; background: none; border: 0; padding: 0; cursor: pointer; }
+kbd { font: 11px var(--ui-font); padding: 1px 5px; border: 1px solid var(--muted); }
+[hidden] { display: none !important; }
+::selection { background: var(--sel); }
+::highlight(verses) { background-color: var(--sel); }
+::-webkit-scrollbar { width: 8px; }
+::-webkit-scrollbar-thumb { background: var(--muted); }
+
+#bar {
+  position: fixed; inset: 0 0 auto; z-index: 10;
+  display: flex; align-items: center; gap: 4px;
+  height: 48px; padding: 0 12px;
+  background: var(--bg, transparent); border-bottom: 1px solid transparent;
+  transition: border-color .2s, transform .25s ease;
+}
+.scrolled #bar { border-bottom-color: var(--muted); }
+.hide-bar #bar { transform: translateY(-100%); }
+.jump #bar { transition: none; }
+.spacer { flex: 1; }
+.where { display: flex; align-items: center; gap: 6px; padding: 6px 10px; font-size: 14px; }
+.icon { display: grid; place-items: center; width: 32px; height: 32px; color: var(--fg-soft); }
+.where:hover, .icon:hover { background: var(--bg-raised); color: var(--fg); }
+svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 1.6; stroke-linecap: round; stroke-linejoin: round; }
+.where svg { color: var(--fg-soft); }
+
+.segments { display: flex; margin-right: 8px; border: 1px solid var(--muted); }
+.segments button { padding: 4px 10px; font-size: 12px; letter-spacing: .06em; color: var(--fg-soft); }
+.segments button:hover { background: var(--bg-raised); color: var(--fg); }
+.segments button.on { background: var(--accent); color: var(--bg); }
+
+#progress { position: fixed; top: 0; left: 0; z-index: 11; height: 2px; width: 0; background: var(--accent); opacity: 0; }
+.busy #progress { opacity: 1; animation: progress 2s cubic-bezier(.1, .7, .3, 1) forwards; }
+@keyframes progress { to { width: 85%; } }
+
+/* Page */
+#page { max-width: calc(34em + 8rem); margin: 0 auto; padding: 0 4rem 8rem; font-size: var(--size); }
+.chapter-head { margin: 7rem 0 3rem; text-align: center; }
+#book-title { font-size: 12px; letter-spacing: .32em; text-transform: uppercase; color: var(--fg-soft); }
+#chapter-num { margin-top: .5rem; font: 300 5.5rem/1.1 var(--reading-font); color: var(--accent); }
+
+.text { font-family: var(--reading-font); line-height: 1.75; hyphens: auto; }
+.text p { margin: 0 0 .9em; }
+.vn {
+  margin: 0 .3em 0 .1em; font: .55em/0 var(--ui-font); vertical-align: super;
+  color: var(--accent); opacity: .8; cursor: pointer; user-select: none;
+}
+.vn:hover, .vn.on { opacity: 1; text-decoration: underline; text-underline-offset: 3px; }
+
+/* Verse numbers hang in the left margin: KJV/ASV in line mode, and poetry lines (NLT poet*, ESV line) */
+.lines p.v, .text [class^="poet"], .text .line { position: relative; }
+.lines p.v > .vn, .text [class^="poet"] > .vn, .text .line > .vn {
+  position: absolute; right: 100%; top: .95em; margin-right: .7em; vertical-align: baseline; text-indent: 0;
+}
+.lines p.v { margin-bottom: .5em; }
+.flow p.v { display: inline; }
+.flow p.v::after { content: " "; }
+
+.text h3, .text h4, .text .subhead {
+  margin: 2.6em 0 1.1em; font: 500 12px/1.5 var(--ui-font);
+  letter-spacing: .14em; text-transform: uppercase; color: var(--fg-soft);
+}
+.text > h3:first-child, .text > h4:first-child, .text > div > h4:first-child { margin-top: 0; }
+.text .psa-title, .text .psalm-title {
+  margin: 0 0 .9em; font: italic 1em var(--reading-font); letter-spacing: 0; text-transform: none; color: var(--fg-soft);
+}
+.text [class^="poet"], .text .line { display: block; margin: 0; padding-left: 1.5em; text-indent: -1.5em; }
+.text [class^="poet2"], .text .indent.line { padding-left: 3.5em; }
+.text .poet1-vn-sp, .text [class^="poet"] + p:not([class^="poet"]) { margin-top: 1em; }
+.text .block-indent > br { display: none; }
+.text .sc, .text .subhead-sc, .text .divine-name { font-variant: small-caps; }
+.text .red, .text .woc { color: color-mix(in srgb, var(--red) 80%, var(--fg)); }
+.text .a-tn, .text sup.footnote a {
+  padding: 0 .15em; font: .6em/0 var(--ui-font); vertical-align: super;
+  color: var(--accent); text-decoration: none; cursor: help;
+}
+.text sup.footnote { font-size: inherit; line-height: 0; vertical-align: baseline; }
+.text .tn { display: none; }
+.text .footnotes { margin-top: 4em; padding-top: 1.2em; border-top: 1px solid var(--muted); font-size: .78em; color: var(--fg-soft); }
+.text .footnotes a { color: var(--accent); text-decoration: none; }
+
+.card { padding: 1.2em 1.5em; border: 1px solid var(--muted); background: var(--bg-raised); font: 14px/1.6 var(--ui-font); }
+.card h3 { margin: 0 0 .6em; font-size: 14px; letter-spacing: 0; text-transform: none; color: var(--fg); }
+.card a { color: var(--accent); }
+.card pre { margin: .8em 0; padding: .6em .9em; background: var(--bg); }
+
+footer { margin-top: 4rem; font-size: 13px; }
+.pager { display: flex; justify-content: space-between; padding-top: 1.2rem; border-top: 1px solid var(--muted); }
+.pager button { padding: 6px 0; color: var(--fg-soft); }
+.pager button:hover { color: var(--accent); }
+#foot-next { margin-left: auto; }
+#copyright { margin-top: 2.5rem; font-size: 11px; line-height: 1.6; text-align: center; color: var(--fg-soft); opacity: .7; }
+#copyright a { color: inherit; }
+
+/* Overlays look like Omarchy's menus: flat, with an accent border */
+.overlay {
+  position: fixed; inset: 0; z-index: 20;
+  display: flex; justify-content: center; align-items: flex-start; padding: 9vh 16px 0;
+  background: color-mix(in srgb, var(--bg-sunken) 70%, transparent);
+}
+.sheet {
+  display: flex; flex-direction: column; width: min(720px, 100%); max-height: 80vh; overflow: auto;
+  background: var(--bg); border: 2px solid var(--accent); box-shadow: 0 24px 64px rgb(0 0 0 / .35);
+}
+.sheet h4 {
+  display: flex; align-items: center; gap: 12px; margin: 0; padding: 14px 18px 8px;
+  font-size: 11px; font-weight: 500; letter-spacing: .2em; text-transform: uppercase; color: var(--fg-soft);
+}
+.back { font-size: 12px; letter-spacing: 0; text-transform: none; color: var(--accent); }
+.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); padding: 0 10px 12px; }
+.grid button { padding: 6px 8px; text-align: left; }
+.grid.chapters { grid-template-columns: repeat(auto-fill, minmax(48px, 1fr)); gap: 4px; padding-bottom: 16px; }
+.grid.chapters button { padding: 10px 0; text-align: center; background: var(--bg-raised); }
+.grid button:hover { background: var(--sel); }
+.grid button.on { color: var(--accent); }
+
+#q { padding: 14px 18px; border: 0; border-bottom: 1px solid var(--muted); outline: none; background: none; color: var(--fg); font: 16px var(--ui-font); }
+#q::placeholder { color: var(--fg-soft); opacity: .6; }
+#results { margin: 0; padding: 6px 0; overflow: auto; list-style: none; }
+#results li { display: flex; align-items: baseline; gap: 14px; padding: 7px 18px; cursor: pointer; }
+#results li.on { background: var(--sel); }
+#results .ref { flex: 0 0 9em; color: var(--accent); }
+#results .hint { margin-left: auto; font-size: 11px; color: var(--fg-soft); }
+#results .snip { font: 15px/1.5 var(--reading-font); }
+#results mark { background: none; color: var(--accent); }
+#results .note { padding-top: 12px; font-size: 11px; letter-spacing: .08em; text-transform: uppercase; color: var(--fg-soft); cursor: default; }
+
+#help dl { display: grid; grid-template-columns: max-content 1fr; gap: 8px 24px; margin: 6px 18px 16px; }
+#help dt { color: var(--fg-soft); }
+#help dd { margin: 0; }
+
+#tip {
+  position: fixed; z-index: 30; max-width: 26rem; padding: 10px 14px;
+  background: var(--bg-raised); border: 1px solid var(--muted); box-shadow: 0 12px 32px rgb(0 0 0 / .3);
+  font: 15px/1.5 var(--reading-font);
+}
+#tip .tn-ref, #tip .footnote-ref { margin-right: .5em; font: 11px var(--ui-font); color: var(--accent); }
+
+#toast { position: fixed; bottom: 28px; left: 50%; z-index: 30; transform: translateX(-50%); padding: 8px 16px; background: var(--accent); color: var(--bg); font-size: 12px; }
