@@ -31,8 +31,12 @@ class PublicDomain(unittest.TestCase):
 
     def test_search_puts_the_exact_phrase_first(self):
         result = lectio.call("search", {"q": "God so loved", "t": "KJV"})
-        first = result["hits"][0]
-        self.assertEqual((first["b"], first["c"], first["v"]), (43, 3, 16))
+        self.assertEqual(result["hits"][0]["ref"], "John 3:16")
+
+    def test_search_ignores_filler_words(self):
+        result = lectio.call("search", {"q": "the Lord is my shepherd", "t": "KJV"})
+        self.assertEqual(result["words"], ["lord", "shepherd"])
+        self.assertEqual(result["hits"][0]["ref"], "Psalms 23:1")
 
     def test_search_on_an_online_translation_uses_the_kjv(self):
         self.assertEqual(lectio.call("search", {"q": "shepherd", "t": "NLT"})["t"], "KJV")
@@ -46,11 +50,13 @@ class Cleaner(unittest.TestCase):
         markup = lectio.Cleaner.clean(
             '<h3 id="p1">A Heading</h3><p class="starts-chapter"><b class="chapter-num" id="v43003001-1">3:1&nbsp;</b>'
             'First.<b class="verse-num" id="v43003002-1">2&nbsp;</b>Second.'
-            '<sup class="footnote"><a class="fn" href="#f1-1" title="note">1</a></sup></p>'
+            '<sup class="footnote"><a class="fn" href="#f1-1" title="note">1</a></sup>'
+            '<sup><a class="cf" href="Isaiah 9:1-2; Matthew 2:23/" title="ch. 9">a</a></sup></p>'
             '<p>(<a href="http://www.esv.org" class="copyright">ESV</a>)</p>'
         )
         self.assertEqual(self.verses(markup), ["1", "2"])
         self.assertIn('<a class="fn" href="#f1-1">1</a>', markup)
+        self.assertIn('<a class="cf" data-refs="Isaiah 9:1-2; Matthew 2:23">a</a>', markup)
         self.assertNotIn("http://", markup)
         self.assertNotIn("title=", markup)
 

@@ -19,7 +19,7 @@ vm.runInContext(`META = ${JSON.stringify({ books })}`, page);
 
 const ref = s => {
   const r = vm.runInContext(`parseRef(${JSON.stringify(s)})`, page);
-  return r && [books[r.b - 1].name, r.c].filter(Boolean).join(' ') + (r.v ? `:${r.v}` : '');
+  return r && [books[r.b - 1].name, r.c].filter(Boolean).join(' ') + (r.v ? `:${r.v}` : '') + (r.end ? `-${r.end}` : '');
 };
 
 test('references', () => {
@@ -41,9 +41,17 @@ test('references', () => {
     'jas 1': 'James 1',
     'eccl 3:1': 'Ecclesiastes 3:1',
     'isa 53': 'Isaiah 53',
+    'Isa 9:1-2': 'Isaiah 9:1-2',
+    'Song of Solomon 2:1': 'Song of Songs 2:1',
+    'Gen.39.6': 'Genesis 39:6',
     'gen': 'Genesis',
     'matt 29': null,
     'zz 4': null,
   };
   for (const [input, expected] of Object.entries(cases)) assert.equal(ref(input), expected, input);
+});
+
+test('references in notes become links', () => {
+  const html = vm.runInContext(`linkReferences(${JSON.stringify('<span class="tn-ref">4:15-16</span> Isa 9:1-2 (Greek version); Or 3:4.')})`, page);
+  assert.equal(html, '<span class="tn-ref">4:15-16</span> <a class="ref" data-ref="Isa 9:1-2">Isa 9:1-2</a> (Greek version); Or 3:4.');
 });

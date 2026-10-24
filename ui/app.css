@@ -91,7 +91,9 @@ svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width:
   padding: 0 .15em; font: .6em/0 var(--ui-font); vertical-align: super;
   color: var(--accent); text-decoration: none; cursor: help;
 }
-.text sup.footnote { font-size: inherit; line-height: 0; vertical-align: baseline; }
+.text sup { font-size: inherit; line-height: 0; vertical-align: baseline; }
+.text .cf { font: italic .55em/0 var(--reading-font); vertical-align: super; color: var(--fg-soft); opacity: .6; cursor: help; }
+.text .cf:hover { opacity: 1; color: var(--accent); }
 .text .tn { display: none; }
 .text .footnotes { margin-top: 4em; padding-top: 1.2em; border-top: 1px solid var(--muted); font-size: .78em; color: var(--fg-soft); }
 .text .footnotes a { color: var(--accent); text-decoration: none; }
@@ -151,6 +153,7 @@ footer { margin-top: 4rem; font-size: 13px; }
   background: var(--bg-raised); border: 1px solid var(--muted); box-shadow: 0 12px 32px rgb(0 0 0 / .3);
   font: 15px/1.5 var(--reading-font);
 }
+#tip a.ref { color: var(--accent); text-decoration: underline; text-underline-offset: 3px; cursor: pointer; }
 #tip .tn-ref, #tip .footnote-ref { margin-right: .5em; font: 11px var(--ui-font); color: var(--accent); }
 
 #toast { position: fixed; bottom: 28px; left: 50%; z-index: 30; transform: translateX(-50%); padding: 8px 16px; background: var(--accent); color: var(--bg); font-size: 12px; }

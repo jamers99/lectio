@@ -41,7 +41,7 @@ function applyTheme(colors) {
 
 // ---- Reading
 
-async function load(b, c, { verse, select, y = 0, pending } = {}) {
+async function load(b, c, { verse, end, select, y = 0, pending } = {}) {
   const seq = ++loadSeq;
   clearTimeout(busyTimer);
   busyTimer = setTimeout(() => document.body.classList.add('busy'), 150);
@@ -66,7 +66,8 @@ async function load(b, c, { verse, select, y = 0, pending } = {}) {
   // Show the bar without its slide so the fade is the only movement.
   document.body.classList.add('jump');
   document.body.classList.remove('hide-bar');
-  if (verse) scrollToVerse(verse, select);
+  $('#back').hidden = !trail.length;
+  if (verse) scrollToVerse(verse, select, end || verse);
   else scrollTo(0, y);
   lastY = scrollY;
   fadeIn();
@@ -129,12 +130,12 @@ function setTranslation(id) {
   load(S.b, S.c, { verse: verse && +verse.dataset.v });
 }
 
-function scrollToVerse(v, select) {
+function scrollToVerse(v, select, end = v) {
   const vn = text.querySelector(`.vn[data-v="${v}"]`);
   if (!vn) return scrollTo(0, 0);
   scrollTo(0, vn.getBoundingClientRect().top + scrollY - innerHeight * 0.3);
   if (select) {
-    sel = { a: v, b: v };
+    sel = { a: v, b: Math.max(v, end) };
     paint();
   }
 }
@@ -184,17 +185,22 @@ text.addEventListener('click', e => {
     else sel = sel?.a === v && sel?.b === v ? null : { a: v, b: v };
     paint();
   }
-  const note = e.target.closest('.a-tn');
-  if (note) showTip(note);
+  const marker = e.target.closest(NOTE_MARKERS);
+  if (marker) {
+    e.preventDefault();
+    showTip(marker);
+  }
 });
 
-// ---- Footnotes
+// ---- Footnotes and cross-references
 
-const NOTE_MARKERS = '.a-tn, sup.footnote a';
+const NOTE_MARKERS = '.a-tn, sup.footnote a, a.cf';
+const REFERENCE = /\b(?:[1-3] ?)?[A-Z][a-z]+\.?(?: of [A-Z][a-z]+)? \d+:\d+(?:[-–]\d+)?/g;
 
 function noteFor(marker) {
+  if (marker.dataset.refs) return esc(marker.dataset.refs); // ESV cross-reference
   if (marker.classList.contains('a-tn')) return marker.nextElementSibling?.innerHTML; // NLT: note follows the marker
-  // ESV: notes are listed at the end, each one running from its link to the next <br>.
+  // ESV footnotes are listed at the end, each one running from its link to the next <br>.
   const box = document.createElement('div');
   const target = document.getElementById(marker.getAttribute('href').slice(1));
   for (let n = target?.closest('.footnote')?.nextSibling; n && n.nodeName !== 'BR'; n = n.nextSibling) {
@@ -203,10 +209,16 @@ function noteFor(marker) {
   return box.innerHTML.trim();
 }
 
+// Turn references like "Isa 9:1-2" in note text (not inside tags) into links.
+function linkReferences(html) {
+  return html.replace(/(<[^>]*>)|[^<]+/g, (part, tag) => tag || part.replace(REFERENCE, ref =>
+    (parseRef(ref)?.v ? `<a class="ref" data-ref="${ref}">${ref}</a>` : ref)));
+}
+
 function showTip(marker) {
   const content = noteFor(marker);
   if (!content) return;
-  tip.innerHTML = content;
+  tip.innerHTML = linkReferences(content);
   tip.hidden = false;
   const r = marker.getBoundingClientRect();
   tip.style.left = `${Math.min(innerWidth - tip.offsetWidth - 12, Math.max(12, r.left - tip.offsetWidth / 2))}px`;
@@ -217,12 +229,26 @@ function hideTip() {
   tip.hidden = true;
 }
 
+// The note stays open briefly after leaving the marker, so the pointer can reach its links.
+let tipTimer = 0;
 text.addEventListener('mouseover', e => {
   const marker = e.target.closest(NOTE_MARKERS);
-  if (marker) showTip(marker);
+  if (marker) {
+    clearTimeout(tipTimer);
+    showTip(marker);
+  }
 });
 text.addEventListener('mouseout', e => {
-  if (e.target.closest(NOTE_MARKERS)) hideTip();
+  if (e.target.closest(NOTE_MARKERS)) tipTimer = setTimeout(hideTip, 300);
+});
+tip.addEventListener('mouseenter', () => clearTimeout(tipTimer));
+tip.addEventListener('mouseleave', hideTip);
+tip.addEventListener('click', e => {
+  const link = e.target.closest('a.ref');
+  if (link) {
+    hideTip();
+    jump(parseRef(link.dataset.ref));
+  }
 });
 
 // ---- References like "jn 3:16", "1 cor 13", "ps 23"
@@ -240,13 +266,13 @@ function findBooks(s) {
 }
 
 function parseRef(s) {
-  const m = s.trim().match(/^(.*?[a-z].*?)\s*(?:(\d+)(?:\s*[:.\s]\s*(\d+))?(?:\s*[-–]\s*\d+)?)?\s*$/i);
+  const m = s.trim().match(/^(.*?[a-z].*?)\s*(?:(\d+)(?:\s*[:.\s]\s*(\d+))?(?:\s*[-–]\s*(\d+))?)?\s*$/i);
   const bk = m && findBooks(m[1])[0];
   if (!bk) return null;
-  let [c, v] = [+m[2] || null, +m[3] || null];
+  let [c, v, end] = [+m[2] || null, +m[3] || null, +m[4] || null];
   if (bk.chapters === 1 && c > 1 && !v) [c, v] = [1, c];
   if (c > bk.chapters) return null;
-  return { b: META.books.indexOf(bk) + 1, c, v };
+  return { b: META.books.indexOf(bk) + 1, c, v, end: v && end };
 }
 
 // ---- Go to / search palette
@@ -280,10 +306,12 @@ async function runSearch(s) {
   const seq = ++searchSeq;
   const res = await api('search', { t: S.t, q: s });
   if (seq !== searchSeq || q.value.trim() !== s || !res.ok) return;
-  searchWords = s.toLowerCase().match(/[\w’']+/g) || [];
+  searchWords = res.words;
   const shown = res.total > res.hits.length ? ` · first ${res.hits.length}` : '';
   searchNote = res.total ? `${res.total} verse${res.total === 1 ? '' : 's'} · ${res.t}${shown}` : `No verses found in ${res.t}`;
-  items = items.filter(i => !i.snippet).concat(res.hits.map(h => ({ label: `${title(h.b)} ${h.c}:${h.v}`, snippet: h.text, ref: h })));
+  const hits = res.hits.map(h => ({ ref: parseRef(h.ref), snippet: h.text })).filter(h => h.ref?.v);
+  for (const h of hits) h.label = `${title(h.ref.b)} ${h.ref.c}:${h.ref.v}`;
+  items = items.filter(i => !i.snippet).concat(hits);
   renderResults();
 }
 
@@ -307,7 +335,22 @@ function renderResults() {
 function choose(it) {
   if (!it) return;
   closeOverlays();
-  load(it.ref.b, it.ref.c || 1, it.ref.v ? { verse: it.ref.v, select: true } : {});
+  jump(it.ref);
+}
+
+// Jumps (search, references, the book picker) can be undone with back; paging through chapters can't.
+const trail = [];
+
+function jump({ b, c, v, end }) {
+  trail.push({ t: S.t, b: S.b, c: S.c, y: scrollY });
+  load(b, c || 1, v ? { verse: v, end, select: true } : {});
+}
+
+function back() {
+  const place = trail.pop();
+  if (!place) return;
+  S.t = place.t;
+  load(place.b, place.c, { y: place.y });
 }
 
 q.addEventListener('input', updatePalette);
@@ -400,6 +443,9 @@ addEventListener('scroll', () => {
 }, { passive: true });
 addEventListener('mousemove', e => { if (e.clientY < 56) document.body.classList.remove('hide-bar'); });
 
+addEventListener('mouseup', e => { if (e.button === 3) back(); }); // mouse back button
+
+$('#back').onclick = back;
 $('#where').onclick = openBooks;
 $('#search').onclick = openPalette;
 $('#prev').onclick = () => step(-1);
@@ -415,6 +461,7 @@ document.addEventListener('keydown', e => {
   }
   if (open || e.target === q) return;
   if (e.ctrlKey && k === 'c' && sel && getSelection().isCollapsed) return copySelection();
+  if (k === 'Backspace' || (e.altKey && k === 'ArrowLeft')) return back();
   if (e.ctrlKey || e.altKey || e.metaKey) return;
 
   const ids = META.translations.map(t => t.id);

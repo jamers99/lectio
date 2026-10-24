@@ -27,6 +27,8 @@ nlt_key = "..."
 font = "Literata"  # optional, the font for the text
 ```
 
+Search uses the publisher's search for ESV and NLT, so it finds modern wording, and the offline text for KJV and ASV.
+
 To add another public domain translation, add one line to `TRANSLATIONS` in `lectio` using its ID from [bible_databases](https://github.com/scrollmapper/bible_databases/tree/master/formats/json):
 
 ```python

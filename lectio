@@ -30,6 +30,10 @@ DATA = Path(os.environ.get("XDG_DATA_HOME", HOME / ".local/share")) / "lectio"
 CONFIG = Path(os.environ.get("XDG_CONFIG_HOME", HOME / ".config")) / "lectio/config.toml"
 THEME = Path(os.environ.get("XDG_STATE_HOME", HOME / ".local/state")) / "omarchy/current/theme"
 PUBLIC_DOMAIN = "https://raw.githubusercontent.com/scrollmapper/bible_databases/master/formats/json/{}.json"
+FILLER_WORDS = set(
+    "a an and are as at be but by do does don't don’t for from have i in is it me my not of on or so "
+    "that the their them they this to was we were with you your".split()
+)
 READING_FONTS = ["Literata", "Source Serif 4", "Crimson Pro", "EB Garamond", "Libertinus Serif", "Noto Serif"]
 
 # name | chapters | extra search aliases (prefixes of the name already work)
@@ -114,14 +118,27 @@ def fetch_esv(book, chapter, key):
         "include-passage-references": "false",
         "include-audio-link": "false",
         "include-short-copyright": "false",
+        "include-crossrefs": "true",
     })
     passage = json.loads(get(f"https://api.esv.org/v3/passage/html/?{query}", Authorization=f"Token {key}"))["passages"][0]
     return re.sub(r">(?:&nbsp;)+", ">", passage)  # poetry indents are runs of &nbsp;; CSS indents instead
 
 
+def search_esv(text, key):
+    query = urllib.parse.urlencode({"q": text, "page-size": 100})
+    data = json.loads(get(f"https://api.esv.org/v3/passage/search/?{query}", Authorization=f"Token {key}"))
+    return data["total_results"], [(r["reference"], r["content"]) for r in data["results"]]
+
+
 def fetch_nlt(book, chapter, key):
     query = urllib.parse.urlencode({"ref": f"{book}.{chapter}", "version": "NLT", "key": key})
     return get(f"https://api.nlt.to/api/passages?{query}")
+
+
+def search_nlt(text, key):
+    query = urllib.parse.urlencode({"text": text, "version": "NLT", "key": key})
+    rows = re.findall(r"<td><a [^>]*>([^<]+)</a></td>\s*<td>(.*?)</td>", get(f"https://api.nlt.to/api/search?{query}"), re.S)
+    return len(rows), [(ref, html.unescape(re.sub(r"<[^>]+>", "", verse)).strip()) for ref, verse in rows]
 
 
 # Translations without "fetch" are public domain, downloaded once by ID from scrollmapper/bible_databases.
@@ -130,6 +147,7 @@ TRANSLATIONS = {
     "ASV": {"copyright": "American Standard Version (1901). Public domain."},
     "ESV": {
         "fetch": fetch_esv,
+        "search": search_esv,
         "key": "esv_key",
         "signup": "https://api.esv.org/account/create-application/",
         "copyright": (
@@ -140,6 +158,7 @@ TRANSLATIONS = {
     },
     "NLT": {
         "fetch": fetch_nlt,
+        "search": search_nlt,
         "key": "nlt_key",
         "signup": "https://api.nlt.to/Account/Register",
         "copyright": (
@@ -176,6 +195,8 @@ class Cleaner(HTMLParser):
             self.held = [tag, 1, bool(classes & self.VERSE_CLASSES), ""]
         elif tag in self.KEEP:
             kept = {k: v for k, v in attrs.items() if k in ("class", "id") or (k == "href" and v.startswith("#"))}
+            if "cf" in classes:  # ESV cross-reference, href is like "Isaiah 9:1-2; Matthew 2:23/"
+                kept["data-refs"] = attrs.get("href", "").rstrip("/")
             self.out.append(f"<{tag}" + "".join(f' {k}="{html.escape(v)}"' for k, v in kept.items()) + ">")
 
     def handle_endtag(self, tag):
@@ -293,19 +314,29 @@ def chapter(t, b, c):
 
 
 def search(q, t):
-    if "fetch" in TRANSLATIONS[t]:
-        t = "KJV"
-    words = [re.compile(rf"\b{re.escape(w)}", re.I) for w in re.findall(r"[\w’']+", q)]
+    # Every word has to match, so drop filler words: "do not worry" should find "Don't worry".
+    words = re.findall(r"[\w’']+", q.lower())
+    words = [w for w in words if w not in FILLER_WORDS] or words
+    if not words:
+        return {"t": t, "words": [], "total": 0, "hits": []}
+    info = TRANSLATIONS[t]
+    key = "search" in info and config().get(info["key"])
+    if key:
+        total, hits = info["search"](" ".join(words), key)
+    else:
+        t = "KJV" if "fetch" in info else t
+        patterns = [re.compile(rf"\b{re.escape(w)}", re.I) for w in words]
+        hits = [
+            (f"{book} {c}:{v['verse']}", v["text"])
+            for (book, _, _), chapters in zip(BOOKS, local(t))
+            for c, verses in enumerate(chapters, 1)
+            for v in verses
+            if all(p.search(v["text"]) for p in patterns)
+        ]
+        total = len(hits)
     phrase = " ".join(q.lower().split())
-    exact, loose = [], []
-    for b, book in enumerate(local(t), 1):
-        for c, verses in enumerate(book, 1):
-            for v in verses:
-                if words and all(w.search(v["text"]) for w in words):
-                    hit = {"b": b, "c": c, "v": v["verse"], "text": v["text"]}
-                    (exact if phrase in v["text"].lower() else loose).append(hit)
-    hits = exact + loose
-    return {"t": t, "total": len(hits), "hits": hits[:200]}
+    hits.sort(key=lambda hit: phrase not in hit[1].lower())  # verses with the exact phrase first
+    return {"t": t, "words": words, "total": total, "hits": [{"ref": ref, "text": text} for ref, text in hits[:200]]}
 
 
 def copy(text):
